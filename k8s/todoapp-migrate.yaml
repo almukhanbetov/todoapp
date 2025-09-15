@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: todoapp-migrate
+  namespace: default
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432 -U postgres; do
+                echo "⏳ waiting for postgres..."
+                sleep 2
+              done
+              echo "✅ Postgres is up!"
+      containers:
+        - name: migrate
+          image: almuko/todoapp:latest
+          workingDir: /app
+          command: ["sh", "-c", "goose -dir ./migrations postgres \"$DATABASE_URL\" up"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: todoapp-db-secret
+                  key: DATABASE_URL
