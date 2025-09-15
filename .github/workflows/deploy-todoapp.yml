@@ -26,7 +26,7 @@ jobs:
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v4
         with:
-          context: ./todoapp     # 👈 путь к коду
+          context: ./     # 👈 путь к коду
           push: true
           tags: ${{ env.IMAGE_NAME }}:latest
 
