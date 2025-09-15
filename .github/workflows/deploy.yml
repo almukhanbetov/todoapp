@@ -79,7 +79,7 @@ jobs:
 
       - name: Deploy App (Migrations + Deployment + Service + Ingress)
         run: |
-          kubectl apply -f k8s/migrate.yaml -n default
+          kubectl apply -f k8s/todoapp-migrate.yaml -n default
           kubectl apply -f k8s/todoapp.yaml -n default
 
       - name: Wait for migrations to complete
