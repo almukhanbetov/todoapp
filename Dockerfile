@@ -5,7 +5,7 @@ WORKDIR /app
 COPY . .
 
 RUN apk add --no-cache git
-RUN go mod init todoapp && go mod tidy
+RUN go mod tidy
 RUN go build -o todoapp ./main.go
 
 # Runtime stage

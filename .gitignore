@@ -1,0 +1,25 @@
+# Бинарники Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Билды
+*.out
+
+# Кэш Go
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+
+# Временные файлы
+*.log
+*.tmp
+
+# Не игнорировать workflows!
+!.github/
