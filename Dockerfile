@@ -12,7 +12,7 @@ RUN go build -o todoapp ./main.go
 FROM alpine:3.19
 WORKDIR /app
 
-COPY --from=build /app/todoapp /app/todoapp
+COPY --from=build /app/todoapp /app/
 
 EXPOSE 8081
 CMD ["./todoapp"]
