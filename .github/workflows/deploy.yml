@@ -1,0 +1,117 @@
+name: CI/CD Deploy Todoapp
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: almuko/todoapp
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Setup Kubeconfig
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.kube"
+          cat > "$HOME/.kube/config" <<'EOF'
+          ${{ secrets.KUBECONFIG }}
+          EOF
+
+      - name: Deploy ClusterIssuer (Let's Encrypt)
+        run: kubectl apply --validate=false -f k8s/cluster-issuer.yaml
+
+      - name: Deploy Postgres (only if not exists)
+        run: |
+          if ! kubectl get statefulset postgres -n default >/dev/null 2>&1; then
+            echo "Postgres not found. Creating..."
+            kubectl apply -f k8s/postgres.yaml
+            kubectl rollout status statefulset/postgres -n default --timeout=180s
+          else
+            echo "✅ Postgres already exists. Skipping creation."
+          fi
+
+      - name: Recreate todoapp-db-secret
+        run: |
+          kubectl delete secret todoapp-db-secret -n default --ignore-not-found
+          kubectl create secret generic todoapp-db-secret \
+            --from-literal=DATABASE_URL='postgres://postgres:Zxcvbnm123@postgres:5432/todoapp?sslmode=disable'
+
+      - name: Cleanup old migration job and pods
+        run: |
+          if kubectl get job todoapp-migrate -n default >/dev/null 2>&1; then
+            echo "🗑 Deleting old migration job..."
+            kubectl delete job todoapp-migrate -n default
+          fi
+          echo "🧹 Cleaning up old migration pods..."
+          for pod in $(kubectl get pods -n default -l job-name=todoapp-migrate -o jsonpath='{.items[*].metadata.name}'); do
+            kubectl delete pod -n default $pod --ignore-not-found || true
+          done
+
+      - name: Deploy App (Migrations + Deployment + Service + Ingress)
+        run: |
+          kubectl apply -f k8s/migrate.yaml -n default
+          kubectl apply -f k8s/todoapp.yaml -n default
+
+      - name: Wait for migrations to complete
+        run: |
+          echo "⏳ Waiting for migrations to complete..."
+          if ! kubectl wait --for=condition=complete job/todoapp-migrate -n default --timeout=600s; then
+            echo "❌ Migration job did not complete. Showing logs from all pods..."
+            for pod in $(kubectl get pods -n default -l job-name=todoapp-migrate -o jsonpath='{.items[*].metadata.name}'); do
+              echo "🔹 Logs from pod: $pod"
+              kubectl logs -n default $pod || true
+              echo "--------------------------------------"
+            done
+            exit 1
+          fi
+          echo "✅ Migration job completed successfully."
+
+      - name: Wait for app rollout
+        run: kubectl rollout status deployment/todoapp -n default --timeout=180s
+
+      - name: Wait for TLS certificate
+        run: |
+          echo "⏳ Waiting for TLS certificate todoapp-tls..."
+          kubectl wait --for=condition=Ready certificate/todoapp-tls -n default --timeout=300s || \
+            (echo "❌ TLS certificate was not issued" && kubectl describe certificate todoapp-tls -n default && exit 1)
+
+      - name: Test API health endpoint
+        run: |
+          echo "🌍 Testing API endpoint..."
+          curl -vk --retry 5 --retry-delay 10 https://todoapp.compnet.kz/health | grep '"status":"ok"'
+
+      - name: Show Ingress and endpoints
+        run: |
+          kubectl get ingress -n default
+          kubectl get svc -n default
+          kubectl get pods -o wide -n default
